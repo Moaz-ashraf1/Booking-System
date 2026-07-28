@@ -48,31 +48,13 @@ The platform connects three system actors to deliver an end-to-end booking exper
 
 **Actors:** Guest/User (Primary), Database (Secondary)
 
-**Main Flow (Mermaid Flowchart):**
+**Main Flow:**
 
-```mermaid
-flowchart TD
-    Start([Guest types in Destination field]) --> Debounce[Frontend debounces input - 300ms]
-    Debounce --> EmptyCheck{Is query empty?}
-    EmptyCheck -- Yes --> ShowRecent[Show recent searches by guestToken, or placeholder]
-    ShowRecent --> End1([End])
-    EmptyCheck -- No --> SendQuery[Frontend sends query to Backend]
-    SendQuery --> CacheCheck{Cache hit?}
-    CacheCheck -- Yes --> UseCache[Use cached results]
-    CacheCheck -- No --> Prefix[Run Prefix Search - B-Tree - on Destination.name AND Hotel.name]
-    Prefix --> PrefixFound{Any results found?}
-    PrefixFound -- Yes --> UseResults[Use these results]
-    PrefixFound -- No --> Fuzzy[Run Fuzzy Search - GIN pg_trgm - fallback on both tables]
-    Fuzzy --> FuzzyFound{Any results found?}
-    FuzzyFound -- No --> NoResults([Return empty results - End])
-    FuzzyFound -- Yes --> UseResults
-    UseResults --> Merge[Merge results from both tables, tag each with type: destination or hotel]
-    UseCache --> Merge
-    Merge --> StoreCache[Store merged results in Cache]
-    StoreCache --> Return[Return results to Frontend]
-    Return --> Display[Frontend displays suggestions list]
-    Display --> End2([End: Success])
-```
+<p align="center">
+  <img src="diagrams/flowchart-1.png" alt="Autocomplete Flowchart" width="500">
+</p>
+
+---
 
 **Pseudocode:**
 
@@ -136,107 +118,26 @@ FUNCTION autocomplete(query, guestToken):
 - At least 1 adult required per room
 - "Search" button is disabled until Destination + check-in date are set
 
-**Main Flow (Mermaid Flowchart):**
-
-```mermaid
-flowchart TD
-    Start([Guest enters the system]) --> Fill[Guest fills search form: Destination via Autocomplete, Dates, Occupancy]
-    Fill --> Click[Guest clicks Search button]
-    Click --> Valid{Is input valid?}
-    Valid -- No --> ErrEnd([Validation error - End])
-    Valid -- Yes --> BuildKey[System builds Cache Key: destinationId + checkIn + checkOut + occupancy]
-    BuildKey --> CacheCheck{Valid entry in Cache within TTL?}
-    CacheCheck -- Yes --> UseCache[Return cached result]
-    CacheCheck -- No --> Scatter[System scatters request to all Hotel API Providers in parallel]
-    Scatter --> Gather[System gathers responses within timeout window]
-    Gather --> AnyResponse{At least one provider responded?}
-    AnyResponse -- No --> TechErr([Technical error - End])
-    AnyResponse -- Yes --> Group[System groups results by giataId - same physical hotel]
-    Group --> Select[System selects lowest price per group, keeps winningProvider]
-    Select --> ExistsCheck{Hotel exists in DB by giataId?}
-    ExistsCheck -- Yes --> SkipWrite[Skip DB write]
-    ExistsCheck -- No --> StoreStatic[Store static data: name, photos, location, giataId, provider ID mapping - no price]
-    SkipWrite --> StoreCache[Store merged result - price + winningProvider - in Cache, short TTL]
-    StoreStatic --> StoreCache
-    StoreCache --> ResultsCheck
-    UseCache --> ResultsCheck{Any results?}
-    ResultsCheck -- No --> NoRes([No hotels available - End])
-    ResultsCheck -- Yes --> Display[System displays Hotel Cards to user]
-    Display --> Success([End: Success])
-```
+**Main Flow**
+<p align="center">
+  <img src="diagrams/flowchart-2.png" alt="Search Hotel Flowchart" width="500">
+</p>
 
 ---
 
-**Sequence Diagram — High-level (Mermaid):**
+**Sequence Diagram — High-level :**
 
-```mermaid
-sequenceDiagram
-    participant G as Guest
-    participant F as Frontend
-    participant B as Backend
-    participant C as Cache
-
-    G->>F: fill form + click Search
-    F->>F: validate input
-    alt invalid input
-        F-->>G: show validation error
-    else valid input
-        F->>B: send search request
-        B->>C: check cache key
-        alt cache hit
-            C-->>B: return cached result
-        else cache miss
-            Note over B: Fetch & Merge Live Prices (see Zoom-in diagram)
-            alt all providers failed
-                B-->>F: technical error
-                F-->>G: show error message
-            else at least one responded
-                B->>B: merged result ready
-            end
-        end
-        alt no results
-            B-->>F: no results
-            F-->>G: show "No hotels available"
-        else results found
-            B-->>F: return final hotel list
-            F-->>G: display hotel cards
-        end
-    end
-```
+<p align="center">
+  <img src="diagrams/sequence-1.png" alt="High-level Sequence Diagram" width="700">
+</p>
 
 ---
 
-**Sequence Diagram — Zoom-in: Fetch Live Prices (Mermaid):**
+**Sequence Diagram — Zoom-in: Fetch Live Prices :**
 
-```mermaid
-sequenceDiagram
-    participant B as Backend
-    participant P as Providers (1..N)
-    participant D as Database
-    participant C as Cache
-
-    Note over B: Cache miss (from high-level flow)
-    B->>P: scatter request (destination, dates, occupancy) in parallel
-    Note over B,P: wait for responses within fixed timeout window
-
-    alt no provider responded within timeout
-        B-->>B: mark as failure
-        Note over B: return error to Frontend
-    else at least one provider responded
-        P-->>B: gather partial/full responses
-        B->>B: group results by giataId
-        B->>B: select lowest price per group, keep winningProvider
-        B->>D: check if Hotel exists (match by giataId)
-        alt hotel already exists
-            D-->>B: exists, skip write
-        else hotel does not exist
-            B->>D: store static hotel data (name, photo, star, giataId, provider mapping) - no price
-            D-->>B: stored
-        end
-        B->>C: store merged result (price + winningProvider + static data), short TTL
-        B-->>B: return final merged result
-    end
-```
+<p align="center">
+  <img src="diagrams/sequence-2.png" alt=" Fetch Live Prices Sequence Diagram" width="700">
+</p>
 
 **Pseudocode:**
 
